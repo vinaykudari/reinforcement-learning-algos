@@ -6,9 +6,9 @@ import torch.nn.functional as F
 from torch import FloatTensor as FT
 from torch.optim import Adam
 
-from networks.continuous.policy_net import PolicyNetwork
-from networks.continuous.q_net import QNetwork
-from networks.continuous.value_net import ValueNetwork
+from networks.sac.continuous.policy_net import PolicyNetwork
+from networks.sac.continuous.q_net import QNetwork
+from networks.sac.continuous.value_net import ValueNetwork
 from helpers.replay_buffer import ReplayBuffer
 
 
@@ -38,10 +38,9 @@ class SAC:
         self.eps = self.hyprprms.get('eps', 1e-6)
         self.lr = self.hyprprms.get('lr', 0.0003)
         self.gamma = self.hyprprms.get('gamma', 0.95)
-        self.step_sz = self.hyprprms.get('step_sz', 0.001)
         self.eval_ep = self.hyprprms.get('eval_ep', 50)
         self.mem_sz = self.hyprprms.get('mem_sz', 5000)
-        self.critic_sync_f = self.hyprprms.get('critic_sync_f', 1)
+        self.critic_sync_f = self.hyprprms.get('critic_sync_f', 5)
         self.tau = self.hyprprms.get('tau', 0.005)
         self.save_mdls = save_mdls
         self.load_mdls = load_mdls
@@ -102,13 +101,13 @@ class SAC:
         self.logs = defaultdict(
             lambda: {
                 'reward': 0,
-                'cum_reward': 0,
+                'avg_reward': 0,
             },
         )
         self.eval_logs = defaultdict(
             lambda: {
                 'reward': 0,
-                'cum_reward': 0,
+                'avg_reward': 0,
             },
         )
 
@@ -270,6 +269,24 @@ class SAC:
 
         return value_loss, critic_loss, policy_loss
 
+    def evaluate(self, ep=None):
+        if not ep:
+            ep = self.eval_ep
+
+        for ep_no in range(ep):
+            state = self.env.reset()
+            ep_ended = False
+            ep_reward = 0
+            ts = 0
+
+            while not ep_ended and ts < 200:
+                action = self._get_action(state)
+                nxt_state, reward, ep_ended, _ = self.env.step(action)
+                ep_reward += reward
+                state = nxt_state
+
+            self.eval_logs[ep_no]['reward'] = ep_reward
+
     def run(self, ep=1000):
         print('collecting experience...')
         rewards = []
@@ -290,12 +307,12 @@ class SAC:
             v_loss, c_loss, p_loss = 0, 0, 0
             ts = 0
 
-            while not ep_ended and ts < 100:
+            while not ep_ended and ts < 200:
                 action = self._get_action(state)
-                nxt_state, reward, done, _ = self.env.step(action)
+                nxt_state, reward, ep_ended, _ = self.env.step(action)
                 state = FT(state)
                 ep_reward += reward
-                self.memory.add((state, action, reward, nxt_state, done))
+                self.memory.add((state, action, reward, nxt_state, ep_ended))
                 state = nxt_state
                 if self.memory.curr_size > self.mem_sz:
                     v_loss, c_loss, p_loss = self.train(ep_no)
@@ -306,9 +323,14 @@ class SAC:
 
             rewards.append(ep_reward)
             avg_reward = np.mean(rewards[-50:])
+            self.logs[ep_no]['reward'] = ep_reward
+            self.logs[ep_no]['avg_reward'] = avg_reward
 
             if ep_no % self.log_freq == 0:
-                print(f'Episode: {ep_no}, Reward: {ep_reward}, Avg. Reward: {avg_reward}, Losses(V, C, P)={round(float(v_loss), 2), round(float(c_loss), 2), round(float(p_loss), 2)}')
+                if self.memory.curr_size > self.mem_sz:
+                    print(f'Episode: {ep_no}, Reward: {ep_reward}, Avg. Reward: {avg_reward}, Policy Loss={round(float(p_loss), 2)}')
+                else:
+                    print(ep_no, end='..')
 
 
 

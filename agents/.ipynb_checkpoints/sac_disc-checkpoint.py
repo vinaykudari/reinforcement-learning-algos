@@ -4,13 +4,12 @@ import numpy as np
 from pathlib import Path
 import torch
 import torch.nn.functional as F
-from torch.nn.utils import clip_grad_norm_
 from torch import FloatTensor as FT
 from torch.optim import Adam
 
-from networks.discrete.policy_net import PolicyNetwork
-from networks.discrete.q_net import QNetwork
-from helpers.replay_buffer import ReplayBuffer
+from networks.sac.discrete.policy_net import PolicyNetwork
+from networks.sac.discrete.q_net import QNetwork
+from helpers.sac.replay_buffer import ReplayBuffer
 
 
 DEVICE = torch.device(
@@ -322,6 +321,7 @@ class SAC:
                     print(f'Episode: {ep_no}, Reward: {ep_reward}, Avg. Reward: {avg_reward}, Policy Loss={round(float(p_loss), 2)}')
                 else:
                     print(ep_no, end='..')
+
 
 
 

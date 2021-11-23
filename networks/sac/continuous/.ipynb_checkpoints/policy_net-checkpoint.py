@@ -13,7 +13,7 @@ class PolicyNetwork(BaseNetwork):
         action_dim,
         eps,
         max_act,
-        hidden_layers=[256],
+        hidden_layers=[64],
         sigma_min=-20,
         sigma_max=2,
     ):
@@ -23,13 +23,6 @@ class PolicyNetwork(BaseNetwork):
         self.eps = eps
         self.max_act = max_act
 
-        # output mean and std for each of the action
-        # self._init_net(
-        #     ip_dim=state_dim,
-        #     op_dim=2*action_dim,
-        #     hidden_layers=hidden_layers,
-        # )
-
         self.fc1 = nn.Linear(state_dim, hidden_layers[0])
         self.fc2 = nn.Linear(hidden_layers[0], hidden_layers[0])
         self.out = nn.Linear(hidden_layers[0], 2*action_dim)
@@ -37,13 +30,6 @@ class PolicyNetwork(BaseNetwork):
     def forward(self, state):
         x = state
         x.to(self.device)
-
-        # n = len(self.layers)
-        # for i, layer in enumerate(self.layers):
-        #     if i < n:
-        #         x = F.relu(layer(x))
-        #     else:
-        #         x = layer(x)
 
         x = F.relu(self.fc1(state))
         x = F.relu(self.fc2(x))
