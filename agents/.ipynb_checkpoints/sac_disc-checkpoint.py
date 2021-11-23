@@ -1,14 +1,15 @@
+import copy
 from collections import defaultdict
 import numpy as np
 from pathlib import Path
 import torch
 import torch.nn.functional as F
+from torch.nn.utils import clip_grad_norm_
 from torch import FloatTensor as FT
 from torch.optim import Adam
 
-from networks.continuous.policy_net import PolicyNetwork
-from networks.continuous.q_net import QNetwork
-from networks.continuous.value_net import ValueNetwork
+from networks.discrete.policy_net import PolicyNetwork
+from networks.discrete.q_net import QNetwork
 from helpers.replay_buffer import ReplayBuffer
 
 
@@ -36,66 +37,86 @@ class SAC:
         self.action_space = env.action_space
         self.hyprprms = hyprprms
         self.eps = self.hyprprms.get('eps', 1e-6)
-        self.lr = self.hyprprms.get('lr', 0.0003)
-        self.gamma = self.hyprprms.get('gamma', 0.95)
-        self.step_sz = self.hyprprms.get('step_sz', 0.001)
+        self.lr = self.hyprprms.get('lr', 5e-4)
+        self.gamma = self.hyprprms.get('gamma', 0.99)
         self.eval_ep = self.hyprprms.get('eval_ep', 50)
         self.mem_sz = self.hyprprms.get('mem_sz', 5000)
-        self.critic_sync_f = self.hyprprms.get('critic_sync_f', 1)
-        self.tau = self.hyprprms.get('tau', 0.005)
+        self.critic_sync_f = self.hyprprms.get('critic_sync_f', 5)
+        self.tau = self.hyprprms.get('tau', 1e-2)
         self.save_mdls = save_mdls
         self.load_mdls = load_mdls
         self.memory = ReplayBuffer(self.mem_sz)
+        self.tgt_entropy = -self.action_space.n
+
+        # alpha network
+        self.log_alpha = torch.zeros(1, requires_grad=True)
+        self.alpha = self.log_alpha.exp().detach()
+        self.alpha_optimizer = Adam(params=[self.log_alpha], lr=self.lr)
+
         # policy network
         self.policy = networks.get(
             'policy_net',
             PolicyNetwork(
                 state_dim=input_dim,
-                action_dim=self.action_space.shape[0],
+                action_dim=self.action_space.n,
                 eps=self.eps,
-                max_act=env.action_space.high,
             ),
         )
         self.policy_optmz = optmzrs.get(
             'policy_optmz',
             Adam(self.policy.parameters(), lr=self.lr),
         )
-        # value network
-        self.value = networks.get(
-            'value_net',
-            ValueNetwork(state_dim=input_dim),
-        )
-        self.tgt_value = networks.get(
-            'target_value_net',
-            ValueNetwork(state_dim=input_dim),
-        )
-        self.value_optmz = optmzrs.get(
-            'value_optmz',
-            Adam(self.value.parameters(), lr=self.lr),
-        )
+
         # critic network
         self.critic_a = networks.get(
             'q_net',
             QNetwork(
                 state_dim=input_dim,
-                action_dim=self.action_space.shape[0],
+                action_dim=self.action_space.n,
             )
         )
         self.critic_a_optmz = optmzrs.get(
             'critic_a_optmz',
             Adam(self.critic_a.parameters(), lr=self.lr),
         )
-        # target critic network
+
         self.critic_b = networks.get(
             'q_net',
             QNetwork(
                 state_dim=input_dim,
-                action_dim=self.action_space.shape[0],
+                action_dim=self.action_space.n,
             )
         )
         self.critic_b_optmz = optmzrs.get(
             'critic_b_optmz',
             Adam(self.critic_b.parameters(), lr=self.lr),
+        )
+
+        # target critic network
+        self.critic_a_tgt = networks.get(
+            'q_net',
+            QNetwork(
+                state_dim=input_dim,
+                action_dim=self.action_space.n,
+            )
+        )
+        self.critic_a_tgt.load_state_dict(self.critic_a.state_dict())
+        self.critic_a_tgt_optmz = optmzrs.get(
+            'critic_a_optmz',
+            Adam(self.critic_a_tgt.parameters(), lr=self.lr),
+        )
+
+        self.critic_b_tgt = networks.get(
+            'q_net',
+            QNetwork(
+                state_dim=input_dim,
+                action_dim=self.action_space.n,
+            )
+        )
+        self.critic_b_tgt.load_state_dict(self.critic_b.state_dict())
+        self.critic_b_tgt_optmz = optmzrs.get(
+            'critic_b_optmz',
+            Adam(self.critic_b_tgt.parameters(), lr=self.lr),
         )
 
         self.log_freq = log_freq
@@ -114,30 +135,29 @@ class SAC:
 
     def _get_action(self, state):
         state = FT(np.array([state])).to(DEVICE)
-        actions, _ = self.policy.sample(state, add_noise=False)
+        action, _, _ = self.policy.sample(state)
 
-        return actions.cpu().detach().numpy()[0]
+        return action.cpu().detach().numpy()[0]
 
-    def _sync_weights(self, tau=None):
+    def _sync_weights(self, src, tgt, tau=None):
         if tau is None:
             tau = self.tau
 
-        target_value_weights = dict(self.tgt_value.named_parameters())
-        value_weights = dict(self.value.named_parameters())
+        tgt_weights = dict(tgt.named_parameters())
+        src_weights = dict(src.named_parameters())
 
-        for name in value_weights:
-            value_weights[name] = tau * value_weights[name].clone() + \
-                    (1-tau) * target_value_weights[name].clone()
+        for name in src_weights:
+            src_weights[name] = tau * src_weights[name].clone() + \
+                    (1-tau) * tgt_weights[name].clone()
 
-        self.tgt_value.load_state_dict(value_weights)
+        tgt.load_state_dict(src_weights)
 
     def _save_models(
         self,
         policy_path=None,
         critic_b_path=None,
         critic_a_path=None,
-        tgt_value_path=None,
-        value_path=None,
+        alpha_path=None,
     ):
         path = Path(f'../models/{self.env_name}/')
         if not path.exists():
@@ -152,17 +172,9 @@ class SAC:
         if critic_b_path is None:
             critic_b_path = path/'critic_b'
 
-        if value_path is None:
-            value_path = path/'value'
-
-        if tgt_value_path is None:
-            tgt_value_path = path/'target_value'
-
         self.policy.save(policy_path)
         self.critic_a.save(critic_a_path)
         self.critic_b.save(critic_b_path)
-        self.value.save(value_path)
-        self.tgt_value.save(tgt_value_path)
 
     def _load_models(
         self,
@@ -187,63 +199,56 @@ class SAC:
             critic_b_path = path/'critic_b'
             self.critic_b.load(critic_b_path)
 
-        if value_path is not None:
-            value_path = path/'value'
-            self.value.load(value_path)
+    def _train_alpha_net(self, probs, log_probs):
+        temp = torch.sum(log_probs * probs, dim=1)
+        alpha_loss = - (self.log_alpha.exp() * (temp.detach() + self.tgt_entropy)).mean()
+        self.alpha_optimizer.zero_grad()
+        alpha_loss.backward()
+        self.alpha_optimizer.step()
+        self.alpha = self.log_alpha.exp().detach()
 
-        if tgt_value_path is not None:
-            tgt_value_path = path/'target_value'
-            self.tgt_value.load(tgt_value_path)
-
-    def _train_value_net(self, states):
-        pred_values = self.value(states).view(-1)
-        actions, log_probs = self.policy.sample(states, add_noise=False)
-        log_probs = log_probs.view(-1)
-
-        pred_q1_vals = self.critic_a.forward(states, actions)
-        pred_q2_vals = self.critic_b.forward(states, actions)
-        pred_q_values = torch.min(pred_q1_vals, pred_q2_vals).view(-1)
-
-        self.value_optmz.zero_grad()
-        target_values = pred_q_values - log_probs
-        val_loss = 0.5 * F.mse_loss(pred_values, target_values.detach())
-        val_loss.backward(retain_graph=True)
-        self.value_optmz.step()
-
-        return val_loss.cpu().detach().numpy()
+        return alpha_loss.cpu().detach().numpy()
 
     def _train_critic_net(self, states, actions, rewards, nxt_states, dones):
+        with torch.no_grad():
+            actions, probs, log_probs = self.policy.sample(nxt_states)
+            q1_target = self.critic_a_tgt(nxt_states)
+            q2_target = self.critic_b_tgt(nxt_states)
+            etp_min_q_vals = torch.min(q1_target, q2_target) - self.alpha * log_probs
+            nxt_v_target = (probs * (etp_min_q_vals)).sum(1).unsqueeze(-1)
+            q_backup = rewards.unsqueeze(-1) + (self.gamma * (1 - dones.unsqueeze(-1)) * nxt_v_target)
+
+        pred_q1_values = self.critic_a(states).gather(1, actions.unsqueeze(-1))
+        pred_q2_values = self.critic_b(states).gather(1, actions.unsqueeze(-1))
+
+        critic_a_loss = 0.5 * F.mse_loss(pred_q1_values, q_backup)
+        critic_b_loss = 0.5 * F.mse_loss(pred_q2_values, q_backup)
+
         self.critic_a_optmz.zero_grad()
         self.critic_b_optmz.zero_grad()
 
-        target_values = self.tgt_value(nxt_states).view(-1)
-        target_q_values = rewards + (1 - dones) * self.gamma * target_values
-        pred_q1_values = self.critic_a.forward(states, actions).view(-1)
-        pred_q2_values = self.critic_b.forward(states, actions).view(-1)
+        critic_a_loss.backward(retain_graph=True)
+        critic_b_loss.backward()
 
-        critic_a_loss = 0.5 * F.mse_loss(pred_q1_values, target_q_values.detach())
-        critic_b_loss = 0.5 * F.mse_loss(pred_q2_values, target_q_values.detach())
-        critic_loss = critic_a_loss + critic_b_loss
-
-        critic_loss.backward()
         self.critic_a_optmz.step()
         self.critic_b_optmz.step()
 
-        return critic_loss.cpu().detach().numpy()
+        return ((critic_a_loss + critic_b_loss)/2).cpu().detach().numpy()
 
-    def _train_policy_net(self, states):
-        actions, log_probs = self.policy.sample(states, add_noise=True)
-        log_probs = log_probs.view(-1)
-        pred_q1_values = self.critic_a.forward(states, actions)
-        pred_q2_values = self.critic_b.forward(states, actions)
-        pred_q_value = torch.min(pred_q1_values, pred_q2_values).view(-1)
-        policy_loss = (log_probs - pred_q_value).mean()
+    def _train_policy_net(self, states, alpha):
+        actions, probs, log_probs = self.policy.sample(states)
+        with torch.no_grad():
+            pred_q1_values = self.critic_a(states)
+            pred_q2_values = self.critic_b(states)
+
+        min_q_values = torch.min(pred_q1_values, pred_q2_values)
+        policy_loss = (probs * (self.alpha * log_probs - min_q_values)).sum(1).mean()
 
         self.policy_optmz.zero_grad()
-        policy_loss.backward(retain_graph=True)
+        policy_loss.backward()
         self.policy_optmz.step()
 
-        return policy_loss.cpu().detach().numpy()
+        return policy_loss.cpu().detach().numpy(), probs, log_probs
 
     def train(self, ep_no):
         states, actions, rewards, nxt_states, dones = \
@@ -255,7 +260,7 @@ class SAC:
         states = FT(states).to(DEVICE)
         actions = FT(actions).to(DEVICE)
 
-        value_loss = self._train_value_net(states)
+        curr_alpha = self.alpha
         critic_loss = self._train_critic_net(
             states,
             actions,
@@ -263,12 +268,17 @@ class SAC:
             nxt_states,
             dones,
         )
-        policy_loss = self._train_policy_net(states)
+        policy_loss, probs, log_probs = self._train_policy_net(
+            states,
+            curr_alpha,
+        )
+        alpha_loss = self._train_alpha_net(probs, log_probs)
 
         if ep_no % self.critic_sync_f:
-            self._sync_weights()
+            self._sync_weights(self.critic_a, self.critic_a_tgt)
+            self._sync_weights(self.critic_b, self.critic_b_tgt)
 
-        return value_loss, critic_loss, policy_loss
+        return alpha_loss, critic_loss, policy_loss
 
     def run(self, ep=1000):
         print('collecting experience...')
@@ -287,18 +297,18 @@ class SAC:
             state = self.env.reset()
             ep_ended = False
             ep_reward = 0
-            v_loss, c_loss, p_loss = 0, 0, 0
+            a_loss, c_loss, p_loss = 0, 0, 0
             ts = 0
 
-            while not ep_ended and ts < 100:
+            while not ep_ended and ts < 200:
                 action = self._get_action(state)
-                nxt_state, reward, done, _ = self.env.step(action)
+                nxt_state, reward, ep_ended, _ = self.env.step(action)
                 state = FT(state)
                 ep_reward += reward
-                self.memory.add((state, action, reward, nxt_state, done))
+                self.memory.add((state, action, reward, nxt_state, ep_ended))
                 state = nxt_state
                 if self.memory.curr_size > self.mem_sz:
-                    v_loss, c_loss, p_loss = self.train(ep_no)
+                    a_loss, c_loss, p_loss = self.train(ep_no)
 
                     if ep_no % 100:
                         self._save_models()
@@ -308,7 +318,10 @@ class SAC:
             avg_reward = np.mean(rewards[-50:])
 
             if ep_no % self.log_freq == 0:
-                print(f'Episode: {ep_no}, Reward: {ep_reward}, Avg. Reward: {avg_reward}, Losses(V, C, P)={round(float(v_loss), 2), round(float(c_loss), 2), round(float(p_loss), 2)}')
+                if self.memory.curr_size > self.mem_sz:
+                    print(f'Episode: {ep_no}, Reward: {ep_reward}, Avg. Reward: {avg_reward}, Policy Loss={round(float(p_loss), 2)}')
+                else:
+                    print(ep_no, end='..')
 
 
 

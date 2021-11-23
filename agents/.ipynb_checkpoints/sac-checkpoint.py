@@ -3,12 +3,12 @@ import numpy as np
 from pathlib import Path
 import torch
 import torch.nn.functional as F
-from torch import FloatTensor as FT, tensor as T
+from torch import FloatTensor as FT
 from torch.optim import Adam
 
-from networks.policy_net import PolicyNetwork
-from networks.q_net import QNetwork
-from networks.value_net import ValueNetwork
+from networks.continuous.policy_net import PolicyNetwork
+from networks.continuous.q_net import QNetwork
+from networks.continuous.value_net import ValueNetwork
 from helpers.replay_buffer import ReplayBuffer
 
 
@@ -41,7 +41,7 @@ class SAC:
         self.step_sz = self.hyprprms.get('step_sz', 0.001)
         self.eval_ep = self.hyprprms.get('eval_ep', 50)
         self.mem_sz = self.hyprprms.get('mem_sz', 5000)
-        self.critic_sync_f = self.hyprprms.get('critic_sync_f', 5)
+        self.critic_sync_f = self.hyprprms.get('critic_sync_f', 1)
         self.tau = self.hyprprms.get('tau', 0.005)
         self.save_mdls = save_mdls
         self.load_mdls = load_mdls

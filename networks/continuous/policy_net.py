@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions.normal import Normal
 
-from .base import BaseNetwork
+from networks.base import BaseNetwork
 
 
 class PolicyNetwork(BaseNetwork):
