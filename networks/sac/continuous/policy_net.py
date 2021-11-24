@@ -1,4 +1,5 @@
 import torch
+from torch import tensor as T
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions.normal import Normal
@@ -21,7 +22,7 @@ class PolicyNetwork(BaseNetwork):
         self.sigma_min = sigma_min
         self.sigma_max = sigma_max
         self.eps = eps
-        self.max_act = max_act
+        self.max_act = T(max_act, device=self.device)
 
         self.fc1 = nn.Linear(state_dim, hidden_layers[0])
         self.fc2 = nn.Linear(hidden_layers[0], hidden_layers[0])
@@ -29,8 +30,6 @@ class PolicyNetwork(BaseNetwork):
 
     def forward(self, state):
         x = state
-        x.to(self.device)
-
         x = F.relu(self.fc1(state))
         x = F.relu(self.fc2(x))
         x = self.out(x)
@@ -42,7 +41,7 @@ class PolicyNetwork(BaseNetwork):
             max=self.sigma_max,
         )
 
-        return mu, sigma
+        return mu.to(self.device), sigma.to(self.device)
 
     def sample(self, state, add_noise=True):
         mu, log_sigma = self.forward(state)
@@ -54,9 +53,9 @@ class PolicyNetwork(BaseNetwork):
         else:
             actions = probs.sample()
 
-        action = (torch.tanh(actions) * torch.tensor(self.max_act)).to(self.device)
+        action = torch.tanh(actions) * self.max_act
         log_probs = probs.log_prob(actions)
         log_probs -= torch.log(1 - action.pow(2) + self.eps)
-        log_probs = log_probs.sum(1, keepdim=True)
+        log_probs = log_probs.sum(-1, keepdim=True)
 
         return action, log_probs

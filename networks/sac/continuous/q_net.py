@@ -20,7 +20,6 @@ class QNetwork(BaseNetwork):
 
     def forward(self, state, action):
         x = torch.cat([state, action], dim=1)
-        x.to(self.device)
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         x = self.out(x)

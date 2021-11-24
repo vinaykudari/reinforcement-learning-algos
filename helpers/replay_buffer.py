@@ -1,6 +1,7 @@
 # inspired from OpenAI baselines: https://github.com/openai/baselines/blob/master/baselines/deepq/replay_buffer.py
 
 import numpy as np
+import torch as t
 
 
 class ReplayBuffer(object):
@@ -28,12 +29,12 @@ class ReplayBuffer(object):
         for i in idxes:
             data = self._storage[i]
             state, action, reward, nxt_state, done = data
-            states.append(np.array(state, copy=False))
-            actions.append(np.array(action, copy=False))
+            states.append(state)
+            actions.append(action)
             rewards.append(reward)
-            nxt_states.append(np.array(nxt_state, copy=False))
+            nxt_states.append(nxt_state)
             dones.append(done)
-        return np.array(states), np.array(actions), np.array(rewards), np.array(nxt_states), np.array(dones)
+        return t.stack(states), t.stack(actions), t.stack(rewards), t.stack(nxt_states), t.stack(dones)
 
     def sample(self, batch_size):
         idxes = np.random.randint(0, len(self._storage) - 1, batch_size)

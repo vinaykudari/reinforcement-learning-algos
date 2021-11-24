@@ -18,7 +18,6 @@ class ValueNetwork(BaseNetwork):
 
     def forward(self, state):
         x = state
-        x.to(self.device)
         x = F.relu(self.fc1(state))
         x = F.relu(self.fc2(x))
         x = self.out(x)

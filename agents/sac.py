@@ -3,7 +3,7 @@ import numpy as np
 from pathlib import Path
 import torch
 import torch.nn.functional as F
-from torch import FloatTensor as FT
+from torch import tensor as T
 from torch.optim import Adam
 
 from networks.sac.continuous.policy_net import PolicyNetwork
@@ -15,7 +15,6 @@ from helpers.replay_buffer import ReplayBuffer
 DEVICE = torch.device(
     'cuda' if torch.cuda.is_available() else 'cpu'
 )
-
 
 class SAC:
     def __init__(
@@ -45,6 +44,7 @@ class SAC:
         self.save_mdls = save_mdls
         self.load_mdls = load_mdls
         self.memory = ReplayBuffer(self.mem_sz)
+        
         # policy network
         self.policy = networks.get(
             'policy_net',
@@ -55,23 +55,28 @@ class SAC:
                 max_act=env.action_space.high,
             ),
         )
+        self.policy.to(DEVICE)
         self.policy_optmz = optmzrs.get(
             'policy_optmz',
             Adam(self.policy.parameters(), lr=self.lr),
         )
+        
         # value network
         self.value = networks.get(
             'value_net',
             ValueNetwork(state_dim=input_dim),
         )
+        self.value.to(DEVICE)
         self.tgt_value = networks.get(
             'target_value_net',
             ValueNetwork(state_dim=input_dim),
         )
+        self.tgt_value.to(DEVICE)
         self.value_optmz = optmzrs.get(
             'value_optmz',
             Adam(self.value.parameters(), lr=self.lr),
         )
+        
         # critic network
         self.critic_a = networks.get(
             'q_net',
@@ -80,6 +85,7 @@ class SAC:
                 action_dim=self.action_space.shape[0],
             )
         )
+        self.critic_a.to(DEVICE)
         self.critic_a_optmz = optmzrs.get(
             'critic_a_optmz',
             Adam(self.critic_a.parameters(), lr=self.lr),
@@ -92,6 +98,7 @@ class SAC:
                 action_dim=self.action_space.shape[0],
             )
         )
+        self.critic_b.to(DEVICE)
         self.critic_b_optmz = optmzrs.get(
             'critic_b_optmz',
             Adam(self.critic_b.parameters(), lr=self.lr),
@@ -112,10 +119,9 @@ class SAC:
         )
 
     def _get_action(self, state):
-        state = FT(np.array([state])).to(DEVICE)
+        state = torch.cat([state])
         actions, _ = self.policy.sample(state, add_noise=False)
-
-        return actions.cpu().detach().numpy()[0]
+        return actions.cpu().detach().numpy()
 
     def _sync_weights(self, tau=None):
         if tau is None:
@@ -247,12 +253,12 @@ class SAC:
     def train(self, ep_no):
         states, actions, rewards, nxt_states, dones = \
             self.memory.sample(self.mem_sz)
-
-        rewards = FT(rewards).to(DEVICE)
-        dones = FT(dones).to(DEVICE)
-        nxt_states = FT(nxt_states).to(DEVICE)
-        states = FT(states).to(DEVICE)
-        actions = FT(actions).to(DEVICE)
+        
+        rewards = T(rewards, dtype=torch.float, device=DEVICE)
+        dones = T(dones, dtype=torch.float, device=DEVICE)
+        nxt_states = T(nxt_states, dtype=torch.float, device=DEVICE)
+        states = T(states, dtype=torch.float, device=DEVICE)
+        actions = T(actions, dtype=torch.float, device=DEVICE)
 
         value_loss = self._train_value_net(states)
         critic_loss = self._train_critic_net(
@@ -302,6 +308,7 @@ class SAC:
 
         for ep_no in range(ep):
             state = self.env.reset()
+            state = T(state, device=DEVICE)
             ep_ended = False
             ep_reward = 0
             v_loss, c_loss, p_loss = 0, 0, 0
@@ -310,8 +317,11 @@ class SAC:
             while not ep_ended and ts < 200:
                 action = self._get_action(state)
                 nxt_state, reward, ep_ended, _ = self.env.step(action)
-                state = FT(state)
                 ep_reward += reward
+                action = T(action, device=DEVICE)
+                reward = T(reward, device=DEVICE)
+                nxt_state = T(nxt_state, device=DEVICE)
+                ep_ended = T(ep_ended, device=DEVICE)
                 self.memory.add((state, action, reward, nxt_state, ep_ended))
                 state = nxt_state
                 if self.memory.curr_size > self.mem_sz:
