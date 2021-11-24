@@ -33,13 +33,13 @@ class A2C:
         self.logs = defaultdict(
             lambda: {
                 'reward': 0,
-                'cum_reward': 0,
+                'avg_reward': 0,
             },
         )
         self.eval_logs = defaultdict(
             lambda: {
                 'reward': 0,
-                'cum_reward': 0,
+                'avg_reward': 0,
             },
         )
         
@@ -111,14 +111,36 @@ class A2C:
         
         return net_loss, ep_reward
     
+    def evaluate(self, ep=None):
+        if not ep:
+            ep = self.eval_ep
+
+        for ep_no in range(ep):
+            state = self.env.reset()
+            state = FT(state)
+            ep_ended = False
+            ep_reward = 0
+            ts = 0
+
+            while not ep_ended and ts < 200:
+                policy = self.actor(state)
+                actn, actn_log_prob = self._get_action(policy)
+                nxt_state, reward, ep_ended, _ = self.env.step(actn.item())
+                ep_reward += reward
+                state = FT(nxt_state)
+
+            self.eval_logs[ep_no]['reward'] = ep_reward
+    
     def run(self, ep=1000):
+        rewards = []
         for ep_no in range(ep):
             ep_loss, ep_reward = self.train()
             
             self.logs[ep_no]['reward'] = ep_reward
-            if ep_no > 0:
-                self.logs[ep_no]['cum_reward'] += \
-                self.logs[ep_no-1]['cum_reward']
+            rewards.append(ep_reward)
+            avg_reward = np.mean(rewards[-50:])
+            self.logs[ep_no]['reward'] = ep_reward
+            self.logs[ep_no]['avg_reward'] = avg_reward
             
             if ep_no % self.log_freq == 0:
                 print(f'Episode: {ep_no}, Loss: {ep_loss}, Avg. Reward: {ep_reward}')
