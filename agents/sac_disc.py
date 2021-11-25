@@ -277,6 +277,25 @@ class SAC:
             self._sync_weights(self.critic_b, self.critic_b_tgt)
 
         return alpha_loss, critic_loss, policy_loss
+    
+    def evaluate(self, ep=None):
+        if not ep:
+            ep = self.eval_ep
+
+        for ep_no in range(ep):
+            state = self.env.reset()
+            ep_ended = False
+            ep_reward = 0
+            ts = 0
+
+            while not ep_ended and ts < 200:
+                action = self._get_action(state)
+                nxt_state, reward, ep_ended, _ = self.env.step(action.item())
+                nxt_state = T(nxt_state, device=DEVICE)
+                ep_reward += reward
+                state = nxt_state
+
+            self.eval_logs[ep_no]['reward'] = ep_reward
 
     def run(self, ep=1000):
         print('collecting experience...')
@@ -318,6 +337,8 @@ class SAC:
 
             rewards.append(ep_reward)
             avg_reward = np.mean(rewards[-50:])
+            self.logs[ep_no]['reward'] = ep_reward
+            self.logs[ep_no]['avg_reward'] = avg_reward
 
             if ep_no % self.log_freq == 0:
                 if self.memory.curr_size > self.mem_sz:
