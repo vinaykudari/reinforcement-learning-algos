@@ -27,7 +27,7 @@ class PolicyNetwork(BaseNetwork):
         x = F.relu(self.fc1(state))
         x = F.relu(self.fc2(x))
         x = self.out(x)
-        x = F.softmax(x, dim=1)
+        x = F.softmax(x, dim=-1)
 
         return x
 

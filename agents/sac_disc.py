@@ -4,12 +4,12 @@ import numpy as np
 from pathlib import Path
 import torch
 import torch.nn.functional as F
-from torch import FloatTensor as FT
+from torch import FloatTensor as FT, tensor as T
 from torch.optim import Adam
 
 from networks.sac.discrete.policy_net import PolicyNetwork
 from networks.sac.discrete.q_net import QNetwork
-from helpers.sac.replay_buffer import ReplayBuffer
+from helpers.replay_buffer import ReplayBuffer
 
 
 DEVICE = torch.device(
@@ -133,10 +133,9 @@ class SAC:
         )
 
     def _get_action(self, state):
-        state = FT(np.array([state])).to(DEVICE)
-        action, _, _ = self.policy.sample(state)
-
-        return action.cpu().detach().numpy()[0]
+        state = torch.cat([state])
+        actions, _, _ = self.policy.sample(state)
+        return actions
 
     def _sync_weights(self, src, tgt, tau=None):
         if tau is None:
@@ -253,11 +252,11 @@ class SAC:
         states, actions, rewards, nxt_states, dones = \
             self.memory.sample(self.mem_sz)
 
-        rewards = FT(rewards).to(DEVICE)
-        dones = FT(dones).to(DEVICE)
-        nxt_states = FT(nxt_states).to(DEVICE)
-        states = FT(states).to(DEVICE)
-        actions = FT(actions).to(DEVICE)
+        rewards = T(rewards, dtype=torch.float, device=DEVICE)
+        dones = T(dones, dtype=torch.float, device=DEVICE)
+        nxt_states = T(nxt_states, dtype=torch.float, device=DEVICE)
+        states = T(states, dtype=torch.float, device=DEVICE)
+        actions = T(actions, dtype=torch.float, device=DEVICE)
 
         curr_alpha = self.alpha
         critic_loss = self._train_critic_net(
@@ -294,6 +293,7 @@ class SAC:
 
         for ep_no in range(ep):
             state = self.env.reset()
+            state = T(state, device=DEVICE)
             ep_ended = False
             ep_reward = 0
             a_loss, c_loss, p_loss = 0, 0, 0
@@ -301,9 +301,12 @@ class SAC:
 
             while not ep_ended and ts < 200:
                 action = self._get_action(state)
-                nxt_state, reward, ep_ended, _ = self.env.step(action)
-                state = FT(state)
+                nxt_state, reward, ep_ended, _ = self.env.step(action.item())
+                state = T(state, device=DEVICE)
                 ep_reward += reward
+                nxt_state = T(nxt_state, device=DEVICE)
+                reward = T(reward, device=DEVICE)
+                ep_ended = T(ep_ended, device=DEVICE)
                 self.memory.add((state, action, reward, nxt_state, ep_ended))
                 state = nxt_state
                 if self.memory.curr_size > self.mem_sz:

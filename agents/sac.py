@@ -253,7 +253,7 @@ class SAC:
     def train(self, ep_no):
         states, actions, rewards, nxt_states, dones = \
             self.memory.sample(self.mem_sz)
-        
+
         rewards = T(rewards, dtype=torch.float, device=DEVICE)
         dones = T(dones, dtype=torch.float, device=DEVICE)
         nxt_states = T(nxt_states, dtype=torch.float, device=DEVICE)
