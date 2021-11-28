@@ -40,13 +40,13 @@ class SAC:
         self.lr = self.hyprprms.get('lr', 5e-4)
         self.gamma = self.hyprprms.get('gamma', 0.99)
         self.eval_ep = self.hyprprms.get('eval_ep', 50)
-        self.mem_sz = self.hyprprms.get('mem_sz', 10000)
+        self.mem_sz = self.hyprprms.get('mem_sz', 20000)
         self.critic_sync_f = self.hyprprms.get('critic_sync_f', 5)
         self.tau = self.hyprprms.get('tau', 1e-2)
         self.save_mdls = save_mdls
         self.load_mdls = load_mdls
         self.memory = ReplayBuffer(self.mem_sz)
-        self.tgt_entropy = -np.log(1.0 / self.action_space.n) * 0.96
+        self.tgt_entropy = -self.action_space.n
 
         # alpha network
         self.log_alpha = torch.zeros(1, requires_grad=True)
@@ -91,6 +91,9 @@ class SAC:
             'critic_b_optmz',
             Adam(self.critic_b.parameters(), lr=self.lr),
         )
+        
+        if self.load_mdls:
+            self._load_models()
 
         # target critic network
         self.critic_a_tgt = networks.get(
@@ -219,9 +222,9 @@ class SAC:
         self.critic_b_optmz.zero_grad()
 
         critic_a_loss.backward()
-        clip_grad_norm_(self.critic_a.parameters(), 1)
+#         clip_grad_norm_(self.critic_a.parameters(), 1)
         critic_b_loss.backward()
-        clip_grad_norm_(self.critic_b.parameters(), 1)
+#         clip_grad_norm_(self.critic_b.parameters(), 1)
 
         self.critic_a_optmz.step()
         self.critic_b_optmz.step()
@@ -278,6 +281,7 @@ class SAC:
 
         for ep_no in range(ep):
             state = self.env.reset()
+            state = T(state, device=DEVICE)
             ep_ended = False
             ep_reward = 0
             ts = 0
@@ -288,21 +292,13 @@ class SAC:
                 nxt_state = T(nxt_state, device=DEVICE)
                 ep_reward += reward
                 state = nxt_state
+                ts += 1
 
             self.eval_logs[ep_no]['reward'] = ep_reward
 
     def run(self, ep=1000):
         print('collecting experience...')
         rewards = []
-
-        if self.load_mdls:
-            self._load_models(
-                policy_path=f'models/{env_name}/policy',
-                critic_a_path=f'models/{env_name}/critic_a',
-                critic_b_path=f'models/{env_name}/critic_b',
-                value_path=f'models/{env_name}/value',
-                tgt_value_path=f'models/{env_name}/tgt_value',
-            )
 
         for ep_no in range(ep):
             state = self.env.reset()
