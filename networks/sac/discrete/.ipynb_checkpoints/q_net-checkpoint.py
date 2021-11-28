@@ -17,6 +17,11 @@ class QNetwork(BaseNetwork):
         self.fc1 = nn.Linear(state_dim, hidden_layers[0])
         self.fc2 = nn.Linear(hidden_layers[0], hidden_layers[1])
         self.out = nn.Linear(hidden_layers[0], action_dim)
+#         self.reset_parameters()
+
+#     def reset_parameters(self):
+#         self.fc1.weight.data.uniform_(-3e-3, 3e-3)
+#         self.fc2.weight.data.uniform_(-3e-3, 3e-3)
 
     def forward(self, state):
         state.to(self.device)

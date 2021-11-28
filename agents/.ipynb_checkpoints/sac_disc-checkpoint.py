@@ -4,6 +4,7 @@ import numpy as np
 from pathlib import Path
 import torch
 import torch.nn.functional as F
+from torch.nn.utils import clip_grad_norm_
 from torch import FloatTensor as FT, tensor as T
 from torch.optim import Adam
 
@@ -39,7 +40,7 @@ class SAC:
         self.lr = self.hyprprms.get('lr', 5e-4)
         self.gamma = self.hyprprms.get('gamma', 0.99)
         self.eval_ep = self.hyprprms.get('eval_ep', 50)
-        self.mem_sz = self.hyprprms.get('mem_sz', 5000)
+        self.mem_sz = self.hyprprms.get('mem_sz', 10000)
         self.critic_sync_f = self.hyprprms.get('critic_sync_f', 5)
         self.tau = self.hyprprms.get('tau', 1e-2)
         self.save_mdls = save_mdls
@@ -217,8 +218,10 @@ class SAC:
         self.critic_a_optmz.zero_grad()
         self.critic_b_optmz.zero_grad()
 
-        critic_a_loss.backward(retain_graph=True)
+        critic_a_loss.backward()
+        clip_grad_norm_(self.critic_a.parameters(), 1)
         critic_b_loss.backward()
+        clip_grad_norm_(self.critic_b.parameters(), 1)
 
         self.critic_a_optmz.step()
         self.critic_b_optmz.step()
