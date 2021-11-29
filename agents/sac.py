@@ -281,15 +281,17 @@ class SAC:
 
         for ep_no in range(ep):
             state = self.env.reset()
+            state = T(state, device=DEVICE)
             ep_ended = False
             ep_reward = 0
             ts = 0
 
-            while not ep_ended and ts < 200:
+            while not ep_ended and ts < 600:
                 action = self._get_action(state)
                 nxt_state, reward, ep_ended, _ = self.env.step(action)
                 ep_reward += reward
-                state = nxt_state
+                nxt_state = T(nxt_state, device=DEVICE)
+                ts += 1
 
             self.eval_logs[ep_no]['reward'] = ep_reward
 
