@@ -122,12 +122,13 @@ class A2C:
             ep_reward = 0
             ts = 0
 
-            while not ep_ended and ts < 200:
+            while not ep_ended:
                 policy = self.actor(state)
                 actn, actn_log_prob = self._get_action(policy)
                 nxt_state, reward, ep_ended, _ = self.env.step(actn.item())
                 ep_reward += reward
                 state = FT(nxt_state)
+                ts+=1
 
             self.eval_logs[ep_no]['reward'] = ep_reward
     
