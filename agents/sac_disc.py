@@ -41,6 +41,7 @@ class SAC:
         self.gamma = self.hyprprms.get('gamma', 0.99)
         self.eval_ep = self.hyprprms.get('eval_ep', 50)
         self.mem_sz = self.hyprprms.get('mem_sz', 20000)
+        self.bth_sz = self.hyprprms.get('bth_sz', 2000)
         self.critic_sync_f = self.hyprprms.get('critic_sync_f', 5)
         self.tau = self.hyprprms.get('tau', 1e-2)
         self.save_mdls = save_mdls
@@ -251,7 +252,7 @@ class SAC:
 
     def train(self, ep_no):
         states, actions, rewards, nxt_states, dones = \
-            self.memory.sample(self.mem_sz)
+            self.memory.sample(self.bth_sz)
 
         rewards = T(rewards, dtype=torch.float, device=DEVICE)
         dones = T(dones, dtype=torch.float, device=DEVICE)
